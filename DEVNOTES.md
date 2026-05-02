@@ -21,7 +21,46 @@ Aaron is the sole developer of the FF8 Accessibility Mod — a `dinput8.dll` inj
 
 ---
 
-**Current build: v0.14.65.3 — frame-delay counter on async screenshots so FF8's typewriter rendering finishes before capture. AWAITING BAT.**
+**Current build: v0.14.69 — Draw result credit fix (battle "Received <spell>" lines now credit the actual drawer). AWAITING BAT.**
+
+**Symptom.** When a character draws magic in battle, the "Received N <Spell>" announce sometimes credits a different party member ("Quistis received 4 Blizzards" when Squall actually drew). The on-screen text is correct; only the prepended name in TTS is wrong. Reported by tjsquires.
+
+**Root cause.** `GetLastDrawerName()` in `battle_tts.cpp` was returning a name derived from `s_lastValidatedDrawSlot`, populated by `DiffMagicInventories()` in `battle_tts_menu.inl`. That diff iterates party slots 0..2 and returns the **first slot whose magic-inventory bytes differ** from a turn-start snapshot, with no tie-break. Failure modes that produce wrong attribution:
+- a non-drawer's magic changed between the snapshot and the "Received" line (limit-break magic cost, an earlier action in the same ATB cycle, a Draw → Cast that bypassed stock);
+- the diff has no awareness of *which* character actually chose Draw — it only sees deltas.
+
+The diff was introduced as "validation" (v0.12.52) but the more authoritative signal is `s_lastDrawerPartySlot` (`battle_tts_menu.inl:558`, also refreshed each frame the Draw submenu is open at `battle_tts_menu.inl:1222`), which is set the moment the player enters the Draw submenu — i.e. the actual UI truth of who is drawing. `GetLastDrawerName()` never read it.
+
+**Fix.** `GetLastDrawerName()` now returns `GetBattleCharName(s_lastDrawerPartySlot)` when that slot is `< BATTLE_ALLY_SLOTS`, and falls back to the diff result (`s_lastValidatedDrawSlot`) only when the UI signal is `0xFF`. Both flags are reset to `0xFF` after a successful credit so a subsequent unrelated "Received" line (Mug, victory items) doesn't carry over the drawer. `ValidateDrawCharacter()` still runs the diff and writes `[DRAW-VALID]` log entries unchanged so the existing audit trail is preserved; only the speak path's name source is replaced.
+
+A new diagnostic line is emitted at every credit decision:
+
+```
+BattleTTS: [DRAW-CREDIT] ui-slot=N diff-slot=M -> <Name> (using ui)
+BattleTTS: [DRAW-CREDIT] ui-slot=0xFF diff-slot=N -> <Name> (using diff fallback)
+BattleTTS: [DRAW-CREDIT] ui-slot=0xFF diff-slot=0xFF -> nullptr (no credit)
+```
+
+This makes any future mismatch between the UI signal and the diff visible in `ff8_battle.log` without affecting speech.
+
+**Files touched (v0.14.69):** `battle_tts.cpp` (`GetLastDrawerName` body), `ff8_accessibility.h` (version constant + comment).
+
+**Expected v0.14.69 BAT outcomes:**
+- In battle, Squall draws Blizzard (or any spell) from any enemy: hear *"Squall received 4 Blizzards."* (not Quistis, not Zell).
+- Quistis draws Cure: hear *"Quistis received 3 Cures."* Zell draws Thunder: hear *"Zell received 2 Thunders."*
+- `Logs/ff8_battle.log` shows a `[DRAW-CREDIT] ui-slot=N diff-slot=M -> <Name> (using ui)` line for each credited Received message. If `ui-slot != diff-slot`, the diagnostic captures it without changing the spoken result.
+- Mug "Received" lines and victory-screen "Received <item>" announces are unaffected — Mug doesn't fire through this path; victory items are handled in `battle_tts_victory.inl`.
+- No regression in scan / cast-banner / battle-dialog announces. The gate at `field_dialog.cpp:1063` is unchanged; only the name source within the rewrite block is replaced.
+
+**Risk to validate during BAT:** rapid back-to-back draws by different characters within one ATB pause. `s_lastDrawerPartySlot` is overwritten each frame the Draw submenu is open, so the most recent drawer always wins — which is correct, since the "Received" line that follows is for that same draw event.
+
+**Version note.** v0.14.66/67/68 are reserved in this DEVNOTES preamble for the scan-pipeline elemental affinity / status resist / active statuses work, so this unrelated fix takes v0.14.69 rather than the next sequential number. Renumber on merge if desired.
+
+**Contributor.** Implemented by tjsquires on a fork; submitted as a PR to upstream.
+
+---
+
+**Previous head — v0.14.65.3 — frame-delay counter on async screenshots so FF8's typewriter rendering finishes before capture. AWAITING BAT.**
 
 **v0.14.65.2 BAT result: PASS.** Path fix worked perfectly. Battle log line at 23:42:09 shows the absolute path: `[SCAN-CAPTURE] Auto-screenshot requested at fire #1 slot=3 path='C:\Users\ampag\OneDrive\Documents\FFVIII-Accessibility-Mod\FF8_OriginalPC_mod\Logs\screenshots\scan_234209_596_slot3_Fastitocalon.png'` paired with `[VICTORY-SCREENSHOT] Saved 640x480`. Claude reads the PNG directly from `Logs\screenshots\` — no manual copying needed. Stats announced "Strength 20. Vitality 132. Magic 56. Spirit 180. Speed 5. Luck 0. Evasion 6. Hit 0." for Lv14 Fastitocalon, matching `[SCAN-CACHE]` log exactly. The image content (same too-early render — labels visible, no numeric values, typewriter partial) is the same issue v0.14.65.1 had; addressing that now in v0.14.65.3.
 

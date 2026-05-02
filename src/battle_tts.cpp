@@ -870,9 +870,40 @@ void Update()
 
 const char* GetLastDrawerName()
 {
-    if (s_lastValidatedDrawSlot < BATTLE_ALLY_SLOTS)
-        return GetBattleCharName(s_lastValidatedDrawSlot);
-    return nullptr;
+    // v0.14.69: Prefer the UI signal (s_lastDrawerPartySlot, set the moment
+    // the player enters the Draw submenu in battle_tts_menu.inl and
+    // refreshed each frame the submenu is open) over the magic-inventory
+    // diff result (s_lastValidatedDrawSlot from DiffMagicInventories).
+    // The diff has several false-positive modes — a non-drawer's magic can
+    // change between the turn-start snapshot and the "Received" line
+    // (limit-break magic cost, an earlier same-ATB-cycle action, draw-cast
+    // bypassing stock) and DiffMagicInventories returns the first slot it
+    // sees a delta in, misattributing the credit. The UI signal is the
+    // direct truth of who chose Draw.
+    //
+    // Both flags are reset to 0xFF after a successful credit so a
+    // subsequent unrelated "Received" line (Mug, victory items, etc.)
+    // doesn't carry over a stale drawer.
+    uint8_t uiSlot   = s_lastDrawerPartySlot;
+    uint8_t diffSlot = s_lastValidatedDrawSlot;
+    const char* result = nullptr;
+    if (uiSlot < BATTLE_ALLY_SLOTS) {
+        result = GetBattleCharName(uiSlot);
+        Log::Battle("BattleTTS: [DRAW-CREDIT] ui-slot=%u diff-slot=%u -> %s (using ui)",
+                    (unsigned)uiSlot, (unsigned)diffSlot, result ? result : "(null)");
+    } else if (diffSlot < BATTLE_ALLY_SLOTS) {
+        result = GetBattleCharName(diffSlot);
+        Log::Battle("BattleTTS: [DRAW-CREDIT] ui-slot=0xFF diff-slot=%u -> %s (using diff fallback)",
+                    (unsigned)diffSlot, result ? result : "(null)");
+    } else {
+        Log::Battle("BattleTTS: [DRAW-CREDIT] ui-slot=0xFF diff-slot=0x%02X -> nullptr (no credit)",
+                    (unsigned)diffSlot);
+    }
+    if (result) {
+        s_lastDrawerPartySlot   = 0xFF;
+        s_lastValidatedDrawSlot = 0xFF;
+    }
+    return result;
 }
 
 uint8_t GetDrawExecutingSlot()
