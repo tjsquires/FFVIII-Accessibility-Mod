@@ -21,7 +21,30 @@ Aaron is the sole developer of the FF8 Accessibility Mod — a `dinput8.dll` inj
 
 ---
 
-**Current build: v0.14.72.t4 — Throttle the t3 [VEHICLE] log to ≤1 line per 5 s. AWAITING BAT.**
+**Current build: v0.14.72.t5 — DIAGNOSTIC: hex-window dump for unhandled Junction focus states. AWAITING BAT.**
+
+**Why.** tjsquires reported the **Junction → Magic-J grid** is silent. v0.14.72.t4 BAT log (`ff8_menu.log` 15:17:11) identified the gap:
+
+```
+[JuncTTS] Unhandled focus=49 +271=0 +272=0 +275=0
+[JuncTTS] Unhandled focus=52 +271=0 +272=0 +275=0
+```
+
+The Magic panel uses `focus=49` and `focus=52`, neither covered by `PollJunctionSubmenu`'s dispatcher (which handles focus 0/3/8/37/38/41 and 20-28). The existing unhandled-focus diagnostic only probes three known cursor offsets (`0x271`, `0x272`, `0x275`), all of which read 0 in the Magic panel — so the cursor byte lives elsewhere in the savemap.
+
+**Diagnostic.** Added a 64-byte hex dump of `pMenuStateA + 0x260..0x29F` emitted every ~500 ms while focus is in any unhandled value. By diffing successive `[JuncTTS-DIAG] focus=N 0x260-0x29F: ...` lines as the user navigates the Magic-J slots (HP-J → STR-J → VIT-J → …), we identify the cursor byte. v0.14.72.t6 will use that to write the proper Magic-J handler.
+
+**Files touched (v0.14.72.t5):** `src/menu_tts_junction.inl` (added periodic hex dump inside `PollJunctionSubmenu`'s unhandled-focus block), `src/ff8_accessibility.h` (version constant + comment).
+
+**Expected v0.14.72.t5 BAT outcomes:**
+- No behavior change for the player — still silent in the Magic panel, no TTS regressions elsewhere.
+- `ff8_menu.log` shows `[JuncTTS-DIAG] focus=49 0x260-0x29F: <64 hex bytes>` and `focus=52` lines while in the Magic-J screen, ~2 per second.
+- After the user navigates 5+ slot positions, diffing reveals the cursor byte.
+- Strip this dump once v0.14.72.t6 is wired up.
+
+---
+
+**Previous build (same PR, superseded by v0.14.72.t5) — v0.14.72.t4 — Throttle the t3 [VEHICLE] log to ≤1 line per 5 s. AWAITING BAT.**
 
 **Why.** v0.14.72.t3 restored Aaron's v0.11.04 "log only" behavior, which fixes the spurious-speech problem but inherits a noise problem: the byte at `0x02040A5E` advances ~1×/sec while walking on the world map, so logging on every change writes ~3,600 lines/hr of `ff8_world.log` content during world-map play. Over a 5-hour play session that's ~1.4 MB of useless cycling-byte data drowning out everything else in the log.
 

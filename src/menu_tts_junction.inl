@@ -375,6 +375,29 @@ static void PollJunctionSubmenu()
                 Log::Menu("[JuncTTS] Unhandled focus=%u +271=%u +272=%u +275=%u",
                            (unsigned)focus, (unsigned)base[0x271], (unsigned)base[0x272], (unsigned)base[0x275]);
             }
+
+            // v0.14.72.t5: tjsquires reported the Magic-J grid (focus=49 or
+            // focus=52) doesn't read. Existing diagnostic only logs the three
+            // known cursor offsets (271/272/275), all of which are 0 here, so
+            // the Magic-panel cursor lives at a byte we haven't probed yet.
+            // Dump a 64-byte hex window around the known cursor region every
+            // ~500 ms while focus is unhandled. By diffing successive dumps
+            // taken as the user navigates the Magic-J slots, we can find the
+            // byte that increments with cursor moves. Strip this dump once
+            // the Magic-panel handler is wired up.
+            static DWORD s_juncUnhandledDumpTick = 0;
+            DWORD now = GetTickCount();
+            if (now - s_juncUnhandledDumpTick > 500) {
+                s_juncUnhandledDumpTick = now;
+                char hex[256];
+                int p = 0;
+                for (int b = 0; b < 64; b++) {
+                    p += snprintf(hex + p, sizeof(hex) - p, "%02X ", base[0x260 + b]);
+                    if (p >= (int)sizeof(hex) - 4) break;
+                }
+                Log::Menu("[JuncTTS-DIAG] focus=%u 0x260-0x29F: %s",
+                           (unsigned)focus, hex);
+            }
         }
         
         // ---- Ability Screen (focus 20-28 range) ----
