@@ -21,7 +21,44 @@ Aaron is the sole developer of the FF8 Accessibility Mod — a `dinput8.dll` inj
 
 ---
 
-**Current build: v0.14.72.t2 (tj-local on top of upstream v0.14.72; formerly v0.14.70 before merging upstream) — World map vehicle-announce gated on known modes only. AWAITING BAT.**
+**Current build: v0.14.72.t3 — Vehicle-announce regression traced to upstream v0.14.43; restored Aaron's v0.11.04 "log only, don't speak" gate. AWAITING BAT.**
+
+**The investigation.** v0.14.72.t2 BAT found the locomotion byte cycling monotonically while walking on foot (4→8→11→14→…→41 over 12s). tjsquires asked whether this was a tj-environment quirk or a regression from upstream code Aaron had published. Git archaeology answered decisively:
+
+- `src/world_map.cpp` has only three commits in its entire history: `4ec2097` (v0.12.18, file split-out), `6d28211` (v0.14.43, cleanup), `900b6de` (our v0.14.72.t2 gate).
+- No commit message anywhere in the repo mentions vehicle/chocobo/ragnarok/locomotion except our own — Aaron has never written a feature commit for vehicle TTS.
+- **At v0.12.18 (the file's first commit), the function was `PollVehicleChange()`, gated to log-only — it never spoke.** Original comment, verbatim:
+
+  > // v0.11.04: Log only, don't speak. The locomotion byte cycles rapidly
+  > // through animation/movement states while walking (0→3→7→10→14→0).
+  > // Need locomotion.md from ff8-speedruns to identify actual vehicle changes
+  > // vs walking animation phases. Will add TTS once enum is decoded.
+
+  Aaron had **already diagnosed this exact byte-cycling pattern in v0.11.04** and correctly chose silence until the enum was decoded.
+
+- **v0.14.43 silently regressed v0.11.04.** That commit (Apr 28) rewrote `world_map.cpp` from 1407 → 292 lines (`1 file changed, 292 insertions(+), 1115 deletions(-)`) as part of a massive items-submenu cleanup. The new `CheckVehicleChange()` calls `ScreenReader::Speak(buf, true)` unconditionally on every byte change — the v0.11.04 safety gate was lost in the rewrite. tjsquires's earlier v0.12.25 build was silent precisely because the gate was still present at that point in history.
+
+So:
+- **The bug is not tj's**, not from the gap between his fork point and Aaron's recent work.
+- **It's a regression in upstream v0.14.43** that's been live since Apr 28 in any environment where the locomotion byte exhibits the v0.11.04 cycling pattern.
+- **v0.14.72.t2's `0..4` range gate was a worse re-implementation of what Aaron already had.**
+
+**Fix.** Replace the t2 range gate with Aaron's v0.11.04 behavior: log only, never speak, until the locomotion enum is actually decoded. One change in `CheckVehicleChange()`: drop the `prevKnown && newKnown` ladder + `Speak()` call; on every byte change emit `Log::World("WorldMap: [VEHICLE] locomotion %d -> %u", s_lastVehicle, vehicle)` and update `s_lastVehicle`. Initial-state gate (`s_lastVehicle != -1`) preserved.
+
+**Files touched (v0.14.72.t3):** `src/world_map.cpp` (`CheckVehicleChange` body), `src/ff8_accessibility.h` (version constant + comment).
+
+**Expected v0.14.72.t3 BAT outcomes:**
+- Walking on the world map: silent (no "Unknown vehicle" announces — same outcome as t2 from the player's perspective).
+- `Logs/ff8_world.log` shows `[VEHICLE] locomotion N -> M` lines on every byte change — useful raw data if anyone wants to look for the real enum.
+- No regression elsewhere — change is isolated to `CheckVehicleChange`.
+
+**Action item for the eventual upstream PR.** Flag to Aaron that v0.14.43 silently dropped the v0.11.04 vehicle-announce safety gate. He may want to (a) accept t3 as the upstream fix, (b) take this as a prompt to actually decode the locomotion enum and ship working vehicle TTS, or (c) both.
+
+**Contributor.** Investigation + fix by tjsquires on a fork. Credit for the original gate goes to Aaron (v0.11.04).
+
+---
+
+**Previous build (same PR, superseded by v0.14.72.t3) — v0.14.72.t2 (tj-local on top of upstream v0.14.72; formerly v0.14.70 before merging upstream) — World map vehicle-announce gated on known modes only. AWAITING BAT.**
 
 **Symptom.** Walking on the world map produced a continuous stream of "Unknown vehicle" announces — ~one per second while in motion. Reported by tjsquires.
 
