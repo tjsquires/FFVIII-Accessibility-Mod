@@ -21,7 +21,24 @@ Aaron is the sole developer of the FF8 Accessibility Mod — a `dinput8.dll` inj
 
 ---
 
-**Current build: v0.14.72.t3 — Vehicle-announce regression traced to upstream v0.14.43; restored Aaron's v0.11.04 "log only, don't speak" gate. AWAITING BAT.**
+**Current build: v0.14.72.t4 — Throttle the t3 [VEHICLE] log to ≤1 line per 5 s. AWAITING BAT.**
+
+**Why.** v0.14.72.t3 restored Aaron's v0.11.04 "log only" behavior, which fixes the spurious-speech problem but inherits a noise problem: the byte at `0x02040A5E` advances ~1×/sec while walking on the world map, so logging on every change writes ~3,600 lines/hr of `ff8_world.log` content during world-map play. Over a 5-hour play session that's ~1.4 MB of useless cycling-byte data drowning out everything else in the log.
+
+**Fix.** Throttle the `[VEHICLE] locomotion N -> M` log line to fire at most once per 5 seconds. New `static DWORD s_lastVehicleLogTick` alongside `s_lastVehicle`. `CheckVehicleChange` now reads `GetTickCount()` and only logs when `(now - s_lastVehicleLogTick) > 5000`. State variable still updates every change so the next eligible log line is correct.
+
+The throttle preserves a sparse diagnostic sample (~720 lines/hr → ~57 KB/hr) so anyone investigating the locomotion enum later still has data to work from, without the log-bloat cost.
+
+**Files touched (v0.14.72.t4):** `src/world_map.cpp` (state-var declaration + `CheckVehicleChange` body), `src/ff8_accessibility.h` (version constant + comment).
+
+**Expected v0.14.72.t4 BAT outcomes:**
+- Walking on the world map: still silent (no TTS, same as t3).
+- `ff8_world.log` contains `[VEHICLE] locomotion N -> M` lines at most every ~5 s while walking — visibly fewer than t3 would emit.
+- No regression elsewhere — change is isolated to `CheckVehicleChange` + one new state variable.
+
+---
+
+**Previous build (same PR, superseded by v0.14.72.t4) — v0.14.72.t3 — Vehicle-announce regression traced to upstream v0.14.43; restored Aaron's v0.11.04 "log only, don't speak" gate. AWAITING BAT.**
 
 **The investigation.** v0.14.72.t2 BAT found the locomotion byte cycling monotonically while walking on foot (4→8→11→14→…→41 over 12s). tjsquires asked whether this was a tj-environment quirk or a regression from upstream code Aaron had published. Git archaeology answered decisively:
 

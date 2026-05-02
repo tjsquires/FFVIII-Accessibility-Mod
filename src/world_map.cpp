@@ -110,6 +110,7 @@ static struct LocationEntry s_catalog[LOCATION_COUNT];  // distance-sorted worki
 static bool s_catalogBuilt = false;
 static int s_catalogIndex = 0;       // current selected location (0 = nearest)
 static int s_lastVehicle = -1;       // last known vehicle state
+static DWORD s_lastVehicleLogTick = 0; // throttle for [VEHICLE] log lines (v0.14.72.t4)
 static bool s_onWorldMap = false;    // true when on world map
 static DWORD s_lastMovementTick = 0; // last time position changed significantly
 
@@ -315,9 +316,18 @@ static void CheckVehicleChange()
         // the v0.14.43 world_map.cpp cleanup (1407→292 lines), causing the
         // per-second "Unknown vehicle" spam. v0.14.72.t2 added a worse 0..4
         // range gate; this build replaces it with Aaron's original behavior.
+        //
+        // v0.14.72.t4: throttle the log to ≤1 line per 5 s. The byte changes
+        // ~1×/sec while walking, which would bloat ff8_world.log by ~3600
+        // lines/hr of world-map play. Throttling preserves a sparse sample
+        // for future enum-decoding work without drowning out other entries.
         if (s_lastVehicle != -1) {
-            Log::World("WorldMap: [VEHICLE] locomotion %d -> %u",
-                       s_lastVehicle, (unsigned)vehicle);
+            DWORD now = GetTickCount();
+            if (now - s_lastVehicleLogTick > 5000) {
+                Log::World("WorldMap: [VEHICLE] locomotion %d -> %u",
+                           s_lastVehicle, (unsigned)vehicle);
+                s_lastVehicleLogTick = now;
+            }
         }
         s_lastVehicle = vehicle;
     }
