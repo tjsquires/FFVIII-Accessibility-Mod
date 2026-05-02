@@ -303,12 +303,33 @@ static void CheckVehicleChange()
 {
     uint8_t vehicle = GetLocomotionMode();
     if (vehicle != s_lastVehicle) {
-        if (s_lastVehicle != -1) {  // skip initial announcement
+        // v0.14.70: Gate the spoken announce to transitions where BOTH the
+        // previous and new values are recognized vehicle modes (0..4).
+        // tjsquires's BAT log (12:27:49-12:28:01) showed the byte at
+        // WM_LOCOMOTION (0x02040A5E) monotonically incrementing while
+        // walking on foot — 4 → 8 → 11 → 14 → 17 → 21 → 25 → 28 → 31 → 34
+        // → 37 → 41 over ~12 seconds — which is movement-counter behavior,
+        // not a vehicle enum. The address is wrong for this FF8/FFNx build,
+        // producing a stream of "Unknown vehicle" announces every time the
+        // counter advances. Until the correct address is identified, we
+        // suppress the announce when either endpoint is outside 0..4 so we
+        // don't spam "Unknown vehicle" and don't speak a bogus known
+        // vehicle name when the counter happens to land in range. The raw
+        // mode value is still logged so the right address can be researched.
+        // Environments where the byte IS read correctly are unaffected —
+        // they'll see only known→known transitions and announce as before.
+        const bool prevKnown = (s_lastVehicle >= 0 && s_lastVehicle <= 4);
+        const bool newKnown  = (vehicle <= 4);
+        if (s_lastVehicle != -1 && prevKnown && newKnown) {
             const char* newVehicle = GetVehicleName(vehicle);
             char buf[128];
             snprintf(buf, sizeof(buf), "%s.", newVehicle);
             ScreenReader::Speak(buf, true);  // interrupt previous speech
             Log::World("WorldMap: Vehicle change: %s (mode %u)", newVehicle, vehicle);
+        } else if (s_lastVehicle != -1) {
+            Log::World("WorldMap: [VEHICLE-GATE] suppress prev=%d new=%u "
+                       "(byte at 0x02040A5E not in 0..4 — likely wrong address)",
+                       s_lastVehicle, (unsigned)vehicle);
         }
         s_lastVehicle = vehicle;
     }

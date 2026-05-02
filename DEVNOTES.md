@@ -21,7 +21,44 @@ Aaron is the sole developer of the FF8 Accessibility Mod — a `dinput8.dll` inj
 
 ---
 
-**Current build: v0.14.69 — Draw result credit fix (battle "Received <spell>" lines now credit the actual drawer). AWAITING BAT.**
+**Current build: v0.14.70 — World map vehicle-announce gated on known modes only. AWAITING BAT.**
+
+**Symptom.** Walking on the world map produced a continuous stream of "Unknown vehicle" announces — ~one per second while in motion. Reported by tjsquires.
+
+**Root cause.** `world_map.cpp:43` reads `WM_LOCOMOTION = 0x02040A5E` as the locomotion-mode byte and `GetVehicleName` switches on values 0..4 (On foot / Car / Chocobo / Ship / Ragnarok), defaulting to "Unknown vehicle". The v0.14.69 BAT `ff8_world.log` at 12:27:49–12:28:01 showed the byte monotonically incrementing while walking on foot:
+
+```
+mode 4 → 8 → 11 → 14 → 17 → 21 → 25 → 28 → 31 → 34 → 37 → 41
+```
+
+That's movement-counter behavior (advances ~+3–4 per second of walking), not a vehicle enum (which should be a small set of discrete values that change only when the player boards/exits a vehicle). The address `0x02040A5E` is wrong for this FF8/FFNx build — either the original mapping was incorrect, or the byte's semantics shifted in a later FFNx revision. The entire vehicle-change feature is therefore broken in this environment, not just the unknown-mode case.
+
+**Fix (mitigation).** `CheckVehicleChange` now gates the speak path on BOTH endpoints of the transition being in the recognized set 0..4. Either side outside that range — including the unknown-mode default — suppresses the announce and writes a `[VEHICLE-GATE]` diagnostic line with the raw values. This silences the spurious announces without disabling the feature for environments where the byte is read correctly: they'll see only known→known transitions and announce as before.
+
+A drift-into-known-range edge case remains theoretically possible — if the counter happens to wrap or land in 0..4 for two consecutive polls, a bogus vehicle name would be spoken once. Acceptable risk given the byte's observed range (4 → 41+ within seconds and growing); a single false-positive in narrow byte ranges is far better than the per-second spam.
+
+**This is not a real fix.** The correct WM_LOCOMOTION address has not been identified. Real fix requires:
+- Cheat Engine session: scan for a byte that flips 0→2 when boarding a Chocobo (and similar transitions for other vehicles), against the running game.
+- Or disassembly research: cross-reference FFNx 1.23.x source / FF8_EN.exe disassembly for the actual locomotion-mode write site.
+- Or upstream check: Aaron's BAT environment may have the byte working correctly today (the original mapping pre-dates this report). If his vehicle announces work, the issue is specific to tj's build (or to a state difference) and a working address can be obtained from his setup.
+
+Recommend opening a separate tracking issue/task before re-enabling the speak path on a corrected address.
+
+**Files touched (v0.14.70):** `src/world_map.cpp` (`CheckVehicleChange` body — gate added, log line for suppressed transitions), `src/ff8_accessibility.h` (version constant + comment).
+
+**Expected v0.14.70 BAT outcomes:**
+- Walking on the world map: silent (no "Unknown vehicle" announces).
+- `Logs/ff8_world.log` shows `[VEHICLE-GATE] suppress prev=N new=M (byte at 0x02040A5E not in 0..4 — likely wrong address)` lines instead of `Vehicle change: Unknown vehicle (mode N)` lines, one per byte change.
+- If Aaron's BAT environment reads valid 0..4 mode values: vehicle announces continue to work normally (no behaviour change for known→known transitions).
+- No regression elsewhere — change is isolated to `CheckVehicleChange`.
+
+**Risk to validate:** If Aaron's environment also shows the incrementing-counter pattern (which would mean the address is wrong for everyone, not just tj's build), then this gate effectively disables the vehicle-announce feature project-wide pending the address fix. Worth confirming during Aaron's BAT.
+
+**Contributor.** Implemented by tjsquires on a fork; bundled with the v0.14.69 draw-credit fix in the same PR.
+
+---
+
+**Previous build (same PR) — v0.14.69 — Draw result credit fix (battle "Received <spell>" lines now credit the actual drawer). AWAITING BAT.**
 
 **Symptom.** When a character draws magic in battle, the "Received N <Spell>" announce sometimes credits a different party member ("Quistis received 4 Blizzards" when Squall actually drew). The on-screen text is correct; only the prepended name in TTS is wrong. Reported by tjsquires.
 
